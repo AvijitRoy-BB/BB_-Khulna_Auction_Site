@@ -1,0 +1,538 @@
+# Create a self-contained offline auction website (single HTML file)
+# Features:
+# - 5 teams with editable budgets
+# - 50 players (editable) with base price and optional image URL
+# - Random draw of next available player
+# - Live bidding panel: select team, enter bid, shows highest bid
+# - Validate remaining budget before accepting bids
+# - "Sell" to highest bid updates team remaining, marks player sold, logs sale
+# - Sales log table + export CSV
+# - Save/Load state to browser localStorage; export/import JSON
+# - Big-Screen mode to show current player, image, and top bid
+# - No external libraries/CDNs (pure HTML+CSS+JS)
+# - Simple Bengali UI text to match user's language preference
+#
+# The file will be saved to /mnt/data/offline_auction.html
+
+html_content = r"""<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>অফলাইন ফুটবল নিলাম</title>
+<style>
+  :root{
+    --bg:#0f172a;       /* slate-900 */
+    --card:#111827;     /* gray-900 */
+    --muted:#1f2937;    /* gray-800 */
+    --text:#e5e7eb;     /* gray-200 */
+    --accent:#22c55e;   /* green-500 */
+    --warn:#ef4444;     /* red-500 */
+    --info:#3b82f6;     /* blue-500 */
+    --yellow:#eab308;   /* yellow-500 */
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  .container{display:grid;grid-template-columns:320px 1fr;gap:16px;padding:16px}
+  .card{background:var(--card);border:1px solid #1f2937;border-radius:16px;padding:16px}
+  h1{font-size:22px;margin:0 0 12px 0}
+  h2{font-size:18px;margin:0 0 8px 0}
+  label{display:block;font-size:13px;margin:6px 0 4px}
+  input,select,button,textarea{
+    width:100%;padding:10px;border-radius:12px;border:1px solid #374151;background:#0b1220;color:var(--text);
+  }
+  input[type=number]{appearance:textfield}
+  button{cursor:pointer}
+  .btn{background:#0b1220}
+  .btn-primary{background:var(--info);border-color:var(--info);color:#fff;font-weight:600}
+  .btn-green{background:var(--accent);border-color:var(--accent);color:#06290e;font-weight:700}
+  .btn-red{background:var(--warn);border-color:var(--warn);color:#fff;font-weight:700}
+  .btn-yellow{background:var(--yellow);border-color:var(--yellow);color:#111}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .mt8{margin-top:8px}.mt12{margin-top:12px}.mt16{margin-top:16px}.mt24{margin-top:24px}
+  .flex{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .pill{padding:6px 10px;border-radius:999px;background:#0b1220;border:1px solid #334155;font-size:12px}
+  table{width:100%;border-collapse:collapse}
+  th,td{border-bottom:1px solid #1f2937;padding:8px;text-align:left;font-size:13px}
+  th{background:#0b1220;position:sticky;top:0}
+  .scroll{max-height:280px;overflow:auto;border:1px solid #1f2937;border-radius:12px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .right{text-align:right}
+  .center{text-align:center}
+  .big{font-size:48px;font-weight:800}
+  .xl{font-size:28px;font-weight:700}
+  .sold{color:var(--accent);font-weight:700}
+  .warning{color:var(--warn);font-weight:700}
+  .muted{color:#9ca3af}
+  .imgbox{width:220px;height:220px;background:#0b1220;border:1px solid #374151;border-radius:16px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .imgbox img{max-width:100%;max-height:100%}
+  .toolbar{display:flex;gap:8px;flex-wrap:wrap}
+  .badge{background:#0b1220;border:1px solid #374151;border-radius:10px;padding:4px 8px;font-size:12px}
+  .footer{font-size:12px;color:#9ca3af;margin-top:12px}
+  .linklike{color:#93c5fd;cursor:pointer;text-decoration:underline}
+  .nowrap{white-space:nowrap}
+</style>
+</head>
+<body>
+  <div class="container">
+    <!-- Left: Controls -->
+    <div class="card">
+      <h1>কন্ট্রোল প্যানেল</h1>
+      <div class="toolbar mt8">
+        <button class="btn btn-primary" id="drawBtn">র‌্যান্ডম ড্র</button>
+        <button class="btn btn-yellow" id="bigBtn">বিগ স্ক্রিন</button>
+        <button class="btn" id="saveBtn">সেভ</button>
+        <button class="btn" id="loadBtn">লোড</button>
+        <button class="btn" id="exportSalesBtn">Sales CSV</button>
+        <button class="btn" id="resetBtn">রিসেট</button>
+      </div>
+
+      <div class="mt16">
+        <h2>টিম সেটআপ</h2>
+        <div id="teamsBox" class="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>টিম</th>
+                <th class="right">বাজেট</th>
+                <th class="right">খরচ</th>
+                <th class="right">বাকি</th>
+                <th class="right nowrap">প্লেয়ার</th>
+              </tr>
+            </thead>
+            <tbody id="teamsTbody"></tbody>
+          </table>
+        </div>
+        <div class="row mt8">
+          <input id="newTeamName" placeholder="নতুন টিম নাম" />
+          <input id="newTeamBudget" type="number" placeholder="বাজেট" />
+        </div>
+        <button class="btn mt8" id="addTeamBtn">টিম যোগ করুন</button>
+      </div>
+
+      <div class="mt16">
+        <h2>প্লেয়ার লিস্ট</h2>
+        <div class="row">
+          <input id="filterPlayer" placeholder="প্লেয়ার সার্চ" />
+          <div class="flex">
+            <span class="badge">মোট <span id="playerCount">0</span></span>
+            <span class="badge">আনসোল্ড <span id="unsoldCount">0</span></span>
+          </div>
+        </div>
+        <div class="scroll mt8">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th><th>নাম</th><th class="right">বেস</th><th>ছবি</th><th>স্ট্যাটাস</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="playersTbody"></tbody>
+          </table>
+        </div>
+        <details class="mt8">
+          <summary>প্লেয়ার যোগ বা ইমপোর্ট</summary>
+          <div class="row mt8">
+            <input id="pName" placeholder="প্লেয়ার নাম" />
+            <input id="pBase" type="number" placeholder="বেস মূল্য" />
+          </div>
+          <input id="pImg" placeholder="ইমেজ URL (ঐচ্ছিক)" class="mt8" />
+          <button class="btn mt8" id="addPlayerBtn">প্লেয়ার যোগ করুন</button>
+          <div class="mt8">CSV ইমপোর্ট (name,base,imgUrl): <input type="file" id="csvInput" accept=".csv" /></div>
+        </details>
+      </div>
+    </div>
+
+    <!-- Right: Live Auction -->
+    <div class="card">
+      <h1>লাইভ নিলাম</h1>
+      <div class="flex">
+        <div class="imgbox"><img id="liveImg" alt="player"/></div>
+        <div style="flex:1">
+          <div id="liveName" class="xl">প্লেয়ার নির্বাচন করুন</div>
+          <div class="mt8">বেস মূল্য: <span id="liveBase" class="pill">0</span></div>
+          <div class="mt8">স্ট্যাটাস: <span id="liveStatus" class="pill">Available</span></div>
+          <div class="mt8">বর্তমান সর্বোচ্চ বিড: <span id="liveTopBid" class="pill">0</span> <span id="liveTopTeam" class="pill"></span></div>
+          <div class="mt8">যার কাছে বিক্রি: <span id="liveSoldTo" class="pill"></span> <span id="liveSoldPrice" class="pill"></span></div>
+        </div>
+      </div>
+
+      <div class="row mt16">
+        <select id="bidTeam"></select>
+        <input id="bidAmount" type="number" placeholder="বিড এমাউন্ট" />
+      </div>
+      <div class="flex mt8">
+        <button class="btn btn-primary" id="placeBidBtn">বিড দিন</button>
+        <button class="btn btn-green" id="sellBtn">বিক্রি করুন</button>
+        <button class="btn btn-red" id="passBtn">পাস</button>
+      </div>
+
+      <div class="mt16">
+        <h2>বিড হিস্টরি</h2>
+        <div id="bidHistory" class="scroll" style="max-height:180px"></div>
+      </div>
+
+      <div class="mt16">
+        <h2>বিক্রির হিসাব</h2>
+        <div class="scroll" style="max-height:220px">
+          <table>
+            <thead><tr><th>সময়</th><th>প্লেয়ার</th><th>টিম</th><th class="right">দাম</th></tr></thead>
+            <tbody id="salesTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="footer">টিপস: লোকাল ইমেজ ফাইল চাইলে আগে কোথাও হোস্ট করে URL দিন বা data URL ব্যবহার করুন। এই ওয়েবপেজ সম্পূর্ণ অফলাইন। কোন ইন্টারনেট নির্ভরতা নেই।</div>
+    </div>
+  </div>
+
+  <!-- Big Screen Modal -->
+  <dialog id="bigScreen" style="width:90vw;height:90vh;background:#000000cc;border:0;border-radius:16px">
+    <div style="display:flex;gap:24px;height:100%">
+      <div class="imgbox" style="width:40vh;height:40vh;margin:24px"><img id="bigImg" alt="player"/></div>
+      <div style="flex:1;margin:24px">
+        <div id="bigName" class="big"></div>
+        <div class="xl mt12">বেস: <span id="bigBase"></span></div>
+        <div class="xl mt12">সর্বোচ্চ বিড: <span id="bigTopBid"></span> <span id="bigTopTeam"></span></div>
+        <div class="xl mt12">স্ট্যাটাস: <span id="bigStatus"></span></div>
+        <div class="xl mt12">বিক্রি: <span id="bigSoldTo"></span> <span id="bigSoldPrice"></span></div>
+        <div class="mt24 flex">
+          <button class="btn" id="bigClose">Close</button>
+          <button class="btn btn-yellow" id="bigFullscreen">Fullscreen</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+<script>
+// ======= Data =======
+let teams = [
+  {name:"টিম A", budget:1000, spent:0, players:0},
+  {name:"টিম B", budget:1000, spent:0, players:0},
+  {name:"টিম C", budget:1000, spent:0, players:0},
+  {name:"টিম D", budget:1000, spent:0, players:0},
+  {name:"টিম E", budget:1000, spent:0, players:0},
+];
+let players = [];
+for(let i=1;i<=50;i++){
+  players.push({id:i, name:"Player "+i, base:100, img:"", sold:false, soldTo:"", soldPrice:0});
+}
+let sales = [];
+let currentId = null;
+let currentBids = []; // {team, amount, time}
+
+// ======= Helpers =======
+function format(n){ return Number(n||0).toLocaleString('en-US'); }
+function remaining(team){ return team.budget - team.spent; }
+function findTeam(name){ return teams.find(t=>t.name===name); }
+function topBid(){ return currentBids.length? currentBids.reduce((a,b)=> a.amount>b.amount?a:b): null; }
+
+function saveState(){
+  const data = {teams, players, sales, currentId, currentBids};
+  localStorage.setItem("auction_state_v1", JSON.stringify(data));
+  alert("সেভ হয়েছে");
+}
+function loadState(){
+  const raw = localStorage.getItem("auction_state_v1");
+  if(!raw){ alert("কোনো সেভ পাওয়া যায়নি"); return; }
+  const data = JSON.parse(raw);
+  teams = data.teams||teams;
+  players = data.players||players;
+  sales = data.sales||[];
+  currentId = data.currentId||null;
+  currentBids = data.currentBids||[];
+  renderAll();
+  alert("লোড হয়েছে");
+}
+function resetAll(){
+  if(!confirm("সব রিসেট হবে")) return;
+  teams.forEach(t=>{t.spent=0;t.players=0;});
+  players.forEach(p=>{p.sold=false;p.soldTo="";p.soldPrice=0;});
+  sales=[]; currentId=null; currentBids=[];
+  renderAll();
+}
+
+// ======= Render =======
+function renderTeams(){
+  // recompute from players
+  teams.forEach(t=>{t.spent=0;t.players=0;});
+  players.filter(p=>p.sold).forEach(p=>{
+    const t = findTeam(p.soldTo);
+    if(t){ t.spent += Number(p.soldPrice)||0; t.players += 1; }
+  });
+
+  const tb = document.getElementById("teamsTbody");
+  tb.innerHTML="";
+  teams.forEach((t,idx)=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td contenteditable="true" onblur="editTeamName(${idx}, this.innerText)">${t.name}</td>
+      <td class="right"><input type="number" value="${t.budget}" oninput="editBudget(${idx}, this.value)" /></td>
+      <td class="right">${format(t.spent)}</td>
+      <td class="right">${format(remaining(t))}</td>
+      <td class="right">${t.players}</td>
+    `;
+    tb.appendChild(tr);
+  });
+
+  // bid team select
+  const sel = document.getElementById("bidTeam");
+  sel.innerHTML = `<option value="">বিড টিম নির্বাচন</option>` + teams.map(t=>`<option>${t.name}</option>`).join("");
+}
+
+function editTeamName(idx, name){
+  const old = teams[idx].name;
+  teams[idx].name = name.trim()||old;
+  // fix players soldTo labels if renamed
+  players.forEach(p=>{
+    if(p.soldTo===old) p.soldTo=teams[idx].name;
+  });
+  renderAll();
+}
+function editBudget(idx, v){
+  teams[idx].budget = Number(v)||0;
+  renderTeams();
+}
+
+function renderPlayers(){
+  const filter = document.getElementById("filterPlayer").value.toLowerCase();
+  const tb = document.getElementById("playersTbody");
+  tb.innerHTML="";
+  const filtered = players.filter(p=>p.name.toLowerCase().includes(filter));
+  document.getElementById("playerCount").innerText = players.length;
+  document.getElementById("unsoldCount").innerText = players.filter(p=>!p.sold).length;
+
+  filtered.forEach(p=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${p.id}</td>
+      <td contenteditable="true" onblur="renamePlayer(${p.id}, this.innerText)">${p.name}</td>
+      <td class="right"><input type="number" value="${p.base}" oninput="editBase(${p.id}, this.value)" style="width:100px" /></td>
+      <td><input value="${p.img||''}" oninput="editImg(${p.id}, this.value)" placeholder="Image URL" /></td>
+      <td>${p.sold? '<span class="sold">Sold</span>':'Available'}</td>
+      <td><button class="btn" onclick="openPlayer(${p.id})">ওপেন</button></td>
+    `;
+    tb.appendChild(tr);
+  });
+}
+function renamePlayer(id, name){
+  const p = players.find(x=>x.id===id); if(!p) return;
+  p.name = name.trim()||p.name;
+  renderPlayers(); renderCurrent();
+}
+function editBase(id, v){
+  const p = players.find(x=>x.id===id); if(!p) return;
+  p.base = Number(v)||0;
+  renderPlayers(); renderCurrent();
+}
+function editImg(id, url){
+  const p = players.find(x=>x.id===id); if(!p) return;
+  p.img = url.trim();
+  renderPlayers(); renderCurrent();
+}
+
+function renderCurrent(){
+  const nameEl = document.getElementById("liveName");
+  const baseEl = document.getElementById("liveBase");
+  const statusEl = document.getElementById("liveStatus");
+  const imgEl = document.getElementById("liveImg");
+  const soldTo = document.getElementById("liveSoldTo");
+  const soldPrice = document.getElementById("liveSoldPrice");
+
+  const top = topBid();
+  document.getElementById("liveTopBid").innerText = top? format(top.amount): "0";
+  document.getElementById("liveTopTeam").innerText = top? top.team: "";
+
+  if(currentId==null){
+    nameEl.innerText = "প্লেয়ার নির্বাচন করুন";
+    baseEl.innerText = "0";
+    statusEl.innerText = "Available";
+    imgEl.src = "";
+    soldTo.innerText=""; soldPrice.innerText="";
+    document.getElementById("bidHistory").innerHTML="";
+    return;
+  }
+  const p = players.find(x=>x.id===currentId);
+  nameEl.innerText = p.name + " (#"+p.id+")";
+  baseEl.innerText = format(p.base);
+  statusEl.innerText = p.sold? "Sold":"Available";
+  imgEl.src = p.img||"";
+  soldTo.innerText = p.sold? p.soldTo:"";
+  soldPrice.innerText = p.sold? format(p.soldPrice):"";
+
+  // history
+  const hist = currentBids.map(b=>`<div class="pill">${b.team} = ${format(b.amount)}</div>`).reverse().join(" ");
+  document.getElementById("bidHistory").innerHTML = hist || '<span class="muted">কোনো বিড নেই</span>';
+
+  // big screen mirror
+  document.getElementById("bigName").innerText = p.name;
+  document.getElementById("bigBase").innerText = format(p.base);
+  document.getElementById("bigStatus").innerText = p.sold? "Sold":"Available";
+  document.getElementById("bigImg").src = p.img||"";
+  document.getElementById("bigSoldTo").innerText = p.sold? p.soldTo:"";
+  document.getElementById("bigSoldPrice").innerText = p.sold? format(p.soldPrice):"";
+  document.getElementById("bigTopBid").innerText = top? format(top.amount): "0";
+  document.getElementById("bigTopTeam").innerText = top? top.team: "";
+}
+
+function renderSales(){
+  const tb = document.getElementById("salesTbody");
+  tb.innerHTML="";
+  sales.slice().reverse().forEach(s=>{
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${new Date(s.time).toLocaleTimeString()}</td><td>${s.player}</td><td>${s.team}</td><td class="right">${format(s.price)}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+function renderAll(){
+  renderTeams();
+  renderPlayers();
+  renderCurrent();
+  renderSales();
+}
+
+// ======= Actions =======
+function openPlayer(id){
+  currentId = id;
+  currentBids = [];
+  renderCurrent();
+}
+
+function drawRandom(){
+  const unsold = players.filter(p=>!p.sold);
+  if(unsold.length===0){ alert("সব প্লেয়ার বিক্রি হয়ে গেছে"); return; }
+  const pick = unsold[Math.floor(Math.random()*unsold.length)];
+  openPlayer(pick.id);
+}
+
+function placeBid(){
+  if(currentId==null){ alert("কোনো প্লেয়ার ওপেন নেই"); return; }
+  const team = document.getElementById("bidTeam").value;
+  const amt = Number(document.getElementById("bidAmount").value);
+  if(!team){ alert("টিম নির্বাচন করুন"); return; }
+  if(!amt || amt<=0){ alert("সঠিক বিড এমাউন্ট দিন"); return; }
+
+  const p = players.find(x=>x.id===currentId);
+  const t = findTeam(team);
+  const min = Math.max(p.base, (topBid()?.amount||0) + 1);
+  if(amt < min){ alert("বিড কম হয়ে গেছে। ন্যূনতম দর "+min); return; }
+  if(amt > remaining(t)){ alert("এই টিমের বাকি বাজেটের চেয়ে বেশি বিড"); return; }
+
+  currentBids.push({team, amount:amt, time:Date.now()});
+  renderCurrent();
+}
+
+function sellToHighest(){
+  if(currentId==null){ alert("কোনো প্লেয়ার ওপেন নেই"); return; }
+  const top = topBid();
+  const p = players.find(x=>x.id===currentId);
+  if(!top){ alert("কোনো বিড নেই"); return; }
+  // finalize
+  p.sold = true; p.soldTo = top.team; p.soldPrice = top.amount;
+  const t = findTeam(top.team);
+  t.spent += top.amount; t.players += 1;
+  sales.push({time:Date.now(), player:p.name, team:top.team, price:top.amount});
+  currentBids = [];
+  renderAll();
+}
+
+function passPlayer(){
+  currentBids = [];
+  renderCurrent();
+}
+
+function addTeam(){
+  const name = document.getElementById("newTeamName").value.trim();
+  const budget = Number(document.getElementById("newTeamBudget").value)||0;
+  if(!name){ alert("টিম নাম দিন"); return; }
+  if(budget<=0){ alert("বাজেট দিন"); return; }
+  teams.push({name, budget, spent:0, players:0});
+  document.getElementById("newTeamName").value="";
+  document.getElementById("newTeamBudget").value="";
+  renderTeams();
+}
+
+function addPlayer(){
+  const name = document.getElementById("pName").value.trim();
+  const base = Number(document.getElementById("pBase").value)||0;
+  const img = document.getElementById("pImg").value.trim();
+  if(!name){ alert("নাম দিন"); return; }
+  if(base<=0){ alert("বেস মূল্য দিন"); return; }
+  const id = players.length? Math.max(...players.map(p=>p.id))+1:1;
+  players.push({id, name, base, img, sold:false, soldTo:"", soldPrice:0});
+  document.getElementById("pName").value="";
+  document.getElementById("pBase").value="";
+  document.getElementById("pImg").value="";
+  renderPlayers();
+}
+
+function exportSalesCSV(){
+  let csv = "time,player,team,price\n";
+  sales.forEach(s=>{
+    csv += `${new Date(s.time).toISOString()},${s.player},${s.team},${s.price}\n`;
+  });
+  const blob = new Blob([csv], {type:"text/csv"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "sales.csv";
+  a.click();
+}
+
+function importCSV(file){
+  const reader = new FileReader();
+  reader.onload = function(){
+    const lines = reader.result.split(/\r?\n/).filter(Boolean);
+    let added = 0;
+    for(let i=0;i<lines.length;i++){
+      const [name, base, img] = lines[i].split(",").map(x=>x?.trim());
+      if(!name) continue;
+      const id = players.length? Math.max(...players.map(p=>p.id))+1:1;
+      players.push({id, name, base:Number(base)||0, img:img||"", sold:false, soldTo:"", soldPrice:0});
+      added++;
+    }
+    alert(added+" জন প্লেয়ার ইমপোর্ট হয়েছে");
+    renderPlayers();
+  };
+  reader.readAsText(file);
+}
+
+// Big screen
+function openBig(){
+  const dlg = document.getElementById("bigScreen");
+  dlg.showModal();
+  renderCurrent();
+}
+function closeBig(){ document.getElementById("bigScreen").close(); }
+function fullscreenBig(){
+  const dlg = document.getElementById("bigScreen");
+  if(dlg.requestFullscreen) dlg.requestFullscreen();
+}
+
+// ======= Bindings =======
+document.getElementById("drawBtn").onclick = drawRandom;
+document.getElementById("placeBidBtn").onclick = placeBid;
+document.getElementById("sellBtn").onclick = sellToHighest;
+document.getElementById("passBtn").onclick = passPlayer;
+document.getElementById("addTeamBtn").onclick = addTeam;
+document.getElementById("addPlayerBtn").onclick = addPlayer;
+document.getElementById("filterPlayer").oninput = renderPlayers;
+document.getElementById("exportSalesBtn").onclick = exportSalesCSV;
+document.getElementById("csvInput").addEventListener("change", e=>{
+  if(e.target.files?.length) importCSV(e.target.files[0]);
+});
+document.getElementById("bigBtn").onclick = openBig;
+document.getElementById("bigClose").onclick = closeBig;
+document.getElementById("bigFullscreen").onclick = fullscreenBig;
+document.getElementById("saveBtn").onclick = saveState;
+document.getElementById("loadBtn").onclick = loadState;
+document.getElementById("resetBtn").onclick = resetAll;
+
+// initial render
+renderAll();
+</script>
+</body>
+</html>
+"""
+with open("/mnt/data/offline_auction.html", "w", encoding="utf-8") as f:
+    f.write(html_content)
+"/mnt/data/offline_auction.html"
